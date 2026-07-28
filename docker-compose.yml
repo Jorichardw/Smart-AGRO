@@ -1,0 +1,151 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: agro_postgres
+    environment:
+      POSTGRES_DB: agro_bot_db
+      POSTGRES_USER: agro_user
+      POSTGRES_PASSWORD: agro_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - agro_network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: agro_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - agro_network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agro_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://agro_user:agro_password@postgres:5432/agro_bot_db
+      - REDIS_URL=redis://redis:6379
+      - FIREBASE_CONFIG_PATH=/app/firebase-config.json
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+      - ./backend/firebase-config.json:/app/firebase-config.json
+    networks:
+      - agro_network
+    restart: unless-stopped
+
+  # AI Services
+  ai-services:
+    build:
+      context: ./ai-services
+      dockerfile: Dockerfile
+    container_name: agro_ai_services
+    ports:
+      - "8001:8001"
+    environment:
+      - MODEL_PATH=/app/models
+    volumes:
+      - ./ai-services:/app
+      - ai_models:/app/models
+    networks:
+      - agro_network
+    restart: unless-stopped
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: agro_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_FIREBASE_CONFIG={"apiKey":"your-api-key","authDomain":"your-domain"}
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - agro_network
+    restart: unless-stopped
+
+  # Admin Portal
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    container_name: agro_admin
+    ports:
+      - "3001:3001"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./admin:/app
+      - /app/node_modules
+    networks:
+      - agro_network
+    restart: unless-stopped
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agro_celery_worker
+    command: celery -A app.celery worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://agro_user:agro_password@postgres:5432/agro_bot_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - agro_network
+    restart: unless-stopped
+
+  # Celery Beat Scheduler
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agro_celery_beat
+    command: celery -A app.celery beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://agro_user:agro_password@postgres:5432/agro_bot_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - agro_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ai_models:
+
+networks:
+  agro_network:
+    driver: bridge
